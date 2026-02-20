@@ -67,4 +67,4 @@ example::Code();
 
 
 ## Reporting Issues
-- Use the [Issues](https://github.com/epiksabin/WeBridge/issues) section to report bugs or suggest features.
+- Use the [Issues](https://github.com/epiksabin/ETCA/issues) section to report bugs or suggest features.
