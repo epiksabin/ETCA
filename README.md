@@ -7,6 +7,9 @@
 - **The Einstein Tiles Compression Algorithm** is a novel approach to image encoding based on the mathematical discovery of the "Hat" and "Spectre" tiles in **March/May 2023**. These are the world's first **aperiodic monotiles**, a single shape that can tile an infinite plane but *never* repeats a pattern.
 - Inspired by aperiodic monotiles (Einstein tiles), specifically the Spectre tile discovered in 2023.
 
+### By
+* epiksabin - aa
+
 ### Folders
 
 * `DOCS/`: Documentation of Spectre Tiles theory and its applications.
@@ -51,11 +54,6 @@ Since we cannot use $(x,y)$ coordinates, we utilize a hierarchical addressing sy
 - **Issue**: Inflating tiles and recursively checking variance is more CPU-intensive than a traditional quadtree.
 - **Impact**: Slower compression, especially for high-resolution images.
 
-### Problem #3: Entropy Coding Challenges
-
-- **Issue**: Aperiodicity reduces simple redundancy patterns.
-- **Impact**: Standard run-length or block-based compression might be less efficient; custom entropy coding may be needed.
-
 ### Benefit #1: Reduced Structured Aliasing
 
 - **Explanation**: Aperiodic tiling avoids grid-aligned Moiré patterns, which improves visual quality for textures and high-frequency patterns.
@@ -63,3 +61,18 @@ Since we cannot use $(x,y)$ coordinates, we utilize a hierarchical addressing sy
 ### Benefit #2: Adaptive Detail Representation
 
 - **Explanation**: Variance-driven subdivision naturally allocates more tiles to detailed regions and fewer to smooth regions, improving perceptual compression efficiency.
+
+# What could this project solve?
+
+### 1. Medical imaging (patterns, textures)
+- Spectre Tiles can help reduce aliasing artifacts in medical images, which often contain complex textures and patterns. This can lead to clearer images for diagnosis while maintaining compression efficiency.
+
+### 2. Texture compression in graphics
+- The algorithm can be particularly beneficial for compressing textures in video games and 3D applications, where Moiré patterns can be visually distracting. By using Spectre Tiles, developers can achieve higher quality textures with fewer artifacts.
+
+### 3. Streaming applications
+- For streaming high-resolution video content, especially in scenarios where bandwidth is limited, the Spectre Tiles Compression Algorithm can provide better visual quality at lower bitrates by reducing aliasing artifacts.
+
+### 4. Any domain where Moiré artifacts are problematic
+- This includes fields like satellite imagery, scientific visualization, and any application where high-frequency details are common. The algorithm can help maintain image quality while still achieving significant compression.
+
