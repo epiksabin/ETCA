@@ -161,17 +161,19 @@ int cmd_compress(int argc, char** argv) {
         auto start_time = std::chrono::high_resolution_clock::now();
         
         progress_thread = std::thread([&progress, &compression_done]() {
+            const double estimated_total = 5.0;
             while (!compression_done) {
                 double elapsed = progress.get_elapsed();
-                double estimated_total = 5.0;
-                
+                double p;
                 if (elapsed < estimated_total) {
-                    double simulated_progress = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
-                    progress.update(simulated_progress);
+                    // Ramp 0 → ~95% over estimated time
+                    p = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
                 } else {
-                    progress.update(0.95);
+                    // Past estimate: creep 95% → 99% so bar keeps moving, ETA hidden
+                    double extra = elapsed - estimated_total;
+                    p = 0.95 + 0.04 * (1.0 - std::exp(-extra / 6.0));
                 }
-                
+                progress.update(std::min(p, 0.99));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         });
@@ -270,17 +272,17 @@ int cmd_decompress(int argc, char** argv) {
         auto start_time = std::chrono::high_resolution_clock::now();
         
         progress_thread = std::thread([&progress, &decompression_done]() {
+            const double estimated_total = 3.0;
             while (!decompression_done) {
                 double elapsed = progress.get_elapsed();
-                double estimated_total = 3.0;
-                
+                double p;
                 if (elapsed < estimated_total) {
-                    double simulated_progress = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
-                    progress.update(simulated_progress);
+                    p = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
                 } else {
-                    progress.update(0.95);
+                    double extra = elapsed - estimated_total;
+                    p = 0.95 + 0.04 * (1.0 - std::exp(-extra / 6.0));
                 }
-                
+                progress.update(std::min(p, 0.99));
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         });

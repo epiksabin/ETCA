@@ -131,13 +131,17 @@ private:
         std::cout << std::setw(5) << std::fixed << std::setprecision(1) 
                   << (progress * 100.0) << "%";
         
-        // ETA
+        // ETA (hide when progress >= 95% to avoid "counting up" as elapsed grows)
         if (current_step_ < total_steps_) {
-            double eta = get_eta();
-            if (eta > 0 && eta < 3600) {  // Less than 1 hour
-                std::cout << " ETA: " << format_time(eta);
+            if (progress >= 0.95) {
+                std::cout << " finishing...";
             } else {
-                std::cout << " ETA: --";
+                double eta = get_eta();
+                if (eta > 0 && eta < 3600) {
+                    std::cout << " ETA: " << format_time(eta);
+                } else {
+                    std::cout << " ETA: --";
+                }
             }
         } else {
             std::cout << " Done!";
