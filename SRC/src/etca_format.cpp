@@ -223,13 +223,15 @@ void EtcaWriter::write_from_file(
     const std::string& output_path,
     bool lossless,
     float variance_threshold,
-    const EtcaMetadata& metadata) {
+    const EtcaMetadata& metadata,
+    bool prefer_speed) {
     
     // Load image from file
     spectre::ColorData image(input_file);
     
     // Create compression configuration
     spectre::CompressionConfig config;
+    config.prefer_speed = prefer_speed;
     
     if (lossless) {
         // For lossless, use extremely low variance threshold to capture all details

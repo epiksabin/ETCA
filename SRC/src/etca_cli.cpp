@@ -1,6 +1,7 @@
 // etca_cli.cpp
 #include "etca_format.h"
 #include "image_io.h"
+#include "progress_bar.h"
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -9,6 +10,9 @@
 #include <chrono>
 #include <ctime>
 #include <sstream>
+#include <thread>
+#include <atomic>
+#include <fstream>
 #if ETCA_OPENMP
 #include <omp.h>
 #endif
@@ -24,6 +28,7 @@ void print_usage(const char* program_name) {
               << "  -o, --output <file>         Output .etca file (auto-generated if omitted)\n"
               << "  --lossless                  Use lossless compression (default: lossy)\n"
               << "  --quality <0.0-100.0>       Compression quality (default: 10.0)\n"
+              << "  --fast                      Faster compression (skip slower codecs, may be slightly larger)\n"
               << "  --author <name>             Author metadata\n"
               << "  --threads <number>          Number of threads to use (default: all available)\n"
               << "\nDecompress options:\n"
@@ -72,6 +77,7 @@ int cmd_compress(int argc, char** argv) {
     bool lossless = false;
     float quality = 10.0f;
     int num_threads = -1;  // -1 = use all available
+    bool prefer_speed = false;
     
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -81,6 +87,8 @@ int cmd_compress(int argc, char** argv) {
             output_file = argv[++i];
         } else if (arg == "--lossless") {
             lossless = true;
+        } else if (arg == "--fast") {
+            prefer_speed = true;
         } else if (arg == "--quality" && i + 1 < argc) {
             try {
                 quality = std::stof(argv[++i]);
@@ -121,9 +129,38 @@ int cmd_compress(int argc, char** argv) {
     }
     
     try {
-        std::cout << "Compressing '" << input_file << "' to '" << output_file << "' This might take a while\n";
+        std::cout << "\033[1m\033[36m" << "ETCA Compression" << "\033[0m\n";
+        std::cout << "Input:  " << input_file << "\n";
+        std::cout << "Output: " << output_file << "\n";
+        std::cout << "Mode:   " << (lossless ? "\033[32mLossless\033[0m" : "\033[33mLossy\033[0m") << "\n";
+        if (!lossless) {
+            std::cout << "Quality: " << quality << "\n";
+        }
+        std::cout << "\n";
+        
+        etca::ProgressBar progress("Compressing", 100);
         
         auto start_time = std::chrono::high_resolution_clock::now();
+        std::atomic<bool> compression_done(false);
+        
+        // Simulate progress updates in a separate thread
+        std::thread progress_thread([&progress, &compression_done]() {
+            while (!compression_done) {
+                // Simulate progress: start fast, slow down, then speed up
+                double elapsed = progress.get_elapsed();
+                double estimated_total = 5.0;  // Rough estimate, will adjust
+                
+                if (elapsed < estimated_total) {
+                    // Exponential progress simulation
+                    double simulated_progress = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
+                    progress.update(simulated_progress);
+                } else {
+                    progress.update(0.95);  // Almost done
+                }
+                
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        });
         
         etca::EtcaMetadata metadata;
         if (!author.empty()) {
@@ -131,17 +168,43 @@ int cmd_compress(int argc, char** argv) {
         }
         metadata.set("compression_mode", lossless ? "lossless" : "lossy");
         
-        etca::EtcaWriter::write_from_file(input_file, output_file, lossless, quality, metadata);
+        etca::EtcaWriter::write_from_file(input_file, output_file, lossless, quality, metadata, prefer_speed);
+        
+        compression_done = true;
+        progress.complete();
+        progress_thread.join();
         
         auto end_time = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(end_time - start_time).count();
         
-        std::cout << "Successfully compressed image to .etca format\n";
-        std::cout << "Compression time: " << format_time(elapsed) << "\n";
+        // Get file sizes for stats
+        std::ifstream in_file(input_file, std::ios::binary | std::ios::ate);
+        std::ifstream out_file(output_file, std::ios::binary | std::ios::ate);
+        size_t input_size = in_file.tellg();
+        size_t output_size = out_file.tellg();
+        in_file.close();
+        out_file.close();
+        
+        std::cout << "\033[1m\033[32m✓ Successfully compressed!\033[0m\n";
+        std::cout << "─────────────────────────────────────────\n";
+        std::cout << "Time:        " << format_time(elapsed) << "\n";
+        std::cout << "Input size:  " << format_bytes(input_size) << "\n";
+        std::cout << "Output size: " << format_bytes(output_size) << "\n";
+        if (output_size > 0 && input_size > 0) {
+            double ratio = static_cast<double>(input_size) / output_size;
+            std::cout << "Ratio:       " << std::fixed << std::setprecision(2) << ratio << "x";
+            if (ratio > 1.0) {
+                std::cout << " \033[32m(compressed)\033[0m";
+            } else {
+                std::cout << " \033[33m(expanded)\033[0m";
+            }
+            std::cout << "\n";
+        }
+        std::cout << "\n";
         
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "\033[1m\033[31m✗ Error:\033[0m " << e.what() << "\n";
         return 1;
     }
 }
@@ -178,21 +241,50 @@ int cmd_decompress(int argc, char** argv) {
     }
     
     try {
-        std::cout << "Decompressing '" << input_file << "' to '" << output_file << "'...\n";
+        std::cout << "\033[1m\033[36m" << "ETCA Decompression" << "\033[0m\n";
+        std::cout << "Input:  " << input_file << "\n";
+        std::cout << "Output: " << output_file << "\n";
+        std::cout << "\n";
+        
+        etca::ProgressBar progress("Decompressing", 100);
         
         auto start_time = std::chrono::high_resolution_clock::now();
+        std::atomic<bool> decompression_done(false);
+        
+        // Simulate progress updates
+        std::thread progress_thread([&progress, &decompression_done]() {
+            while (!decompression_done) {
+                double elapsed = progress.get_elapsed();
+                double estimated_total = 3.0;  // Rough estimate
+                
+                if (elapsed < estimated_total) {
+                    double simulated_progress = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
+                    progress.update(simulated_progress);
+                } else {
+                    progress.update(0.95);
+                }
+                
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        });
         
         etca::EtcaReader::read_to_file(input_file, output_file);
+        
+        decompression_done = true;
+        progress.complete();
+        progress_thread.join();
         
         auto end_time = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(end_time - start_time).count();
         
-        std::cout << "Successfully decompressed .etca file\n";
-        std::cout << "Decompression time: " << format_time(elapsed) << "\n";
+        std::cout << "\033[1m\033[32m✓ Successfully decompressed!\033[0m\n";
+        std::cout << "─────────────────────────────────────────\n";
+        std::cout << "Time: " << format_time(elapsed) << "\n";
+        std::cout << "\n";
         
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "\033[1m\033[31m✗ Error:\033[0m " << e.what() << "\n";
         return 1;
     }
 }
@@ -215,25 +307,36 @@ int cmd_info(int argc, char** argv) {
     try {
         auto etca_file = etca::EtcaReader::read_header_and_metadata(input_file);
         
-        std::cout << "ETCA File Information\n";
-        std::cout << "====================\n";
-        std::cout << "File: " << input_file << "\n";
-        std::cout << "Format version: " << static_cast<int>(etca_file.header.format_version) << "\n";
-        std::cout << "Compression mode: " 
-                  << (etca_file.header.compression_mode == etca::CompressionMode::LOSSY ? "Lossy" : "Lossless") << "\n";
-        std::cout << "Image dimensions: " << etca_file.header.width << " x " << etca_file.header.height << "\n";
-        std::cout << "Color depth: " << std::hex << static_cast<int>(etca_file.header.color_depth) << std::dec << "-bit\n";
+        // Get file size
+        std::ifstream file(input_file, std::ios::binary | std::ios::ate);
+        size_t file_size = file.tellg();
+        file.close();
+        
+        std::cout << "\033[1m\033[36m" << "ETCA File Information" << "\033[0m\n";
+        std::cout << "════════════════════════════════════════\n";
+        std::cout << "\033[1mFile:\033[0m           " << input_file << "\n";
+        std::cout << "\033[1mSize:\033[0m           " << format_bytes(file_size) << "\n";
+        std::cout << "\033[1mFormat version:\033[0m  " << static_cast<int>(etca_file.header.format_version) << "\n";
+        std::cout << "\033[1mCompression:\033[0m     " 
+                  << (etca_file.header.compression_mode == etca::CompressionMode::LOSSY 
+                      ? "\033[33mLossy\033[0m" : "\033[32mLossless\033[0m") << "\n";
+        std::cout << "\033[1mDimensions:\033[0m     " << etca_file.header.width 
+                  << " × " << etca_file.header.height << " px\n";
+        std::cout << "\033[1mColor depth:\033[0m     " << std::hex << static_cast<int>(etca_file.header.color_depth) 
+                  << std::dec << "-bit RGB\n";
         
         if (etca_file.header.metadata_size > 0) {
-            std::cout << "\nMetadata:\n";
-            std::cout << "------------------\n";
-            std::cout << "Size: " << etca_file.header.metadata_size << " bytes\n";
+            std::cout << "\n\033[1mMetadata:\033[0m\n";
+            std::cout << "─────────────────────────────────────────\n";
+            std::cout << "Size: " << format_bytes(etca_file.header.metadata_size) << "\n";
             // TODO: Print individual metadata entries
         }
         
+        std::cout << "\n";
+        
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
+        std::cerr << "\033[1m\033[31m✗ Error:\033[0m " << e.what() << "\n";
         return 1;
     }
 }

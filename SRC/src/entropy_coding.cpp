@@ -707,7 +707,18 @@ std::vector<uint8_t> AdaptiveEncoder::encode(const std::vector<uint8_t>& input, 
     
     std::vector<std::pair<std::vector<uint8_t>, const CompressionStats*>> results;
     
-    // Try multiple codecs
+    // Always consider raw (no entropy): prevents expansion when no codec compresses well
+    std::vector<uint8_t> raw_result;
+    raw_result.push_back(static_cast<uint8_t>(EntropyCodec::NONE));
+    raw_result.insert(raw_result.end(), input.begin(), input.end());
+    static CompressionStats raw_stats;
+    raw_stats.original_size = input.size();
+    raw_stats.compressed_size = raw_result.size();
+    raw_stats.compression_ratio = static_cast<float>(input.size()) / static_cast<float>(raw_result.size());
+    raw_stats.codec_used = EntropyCodec::NONE;
+    results.push_back({raw_result, &raw_stats});
+    
+    // Try codecs that may reduce size
     RLECodec rle;
     auto rle_result = rle.encode(input);
     results.push_back({rle_result, &rle.get_stats()});
@@ -726,18 +737,20 @@ std::vector<uint8_t> AdaptiveEncoder::encode(const std::vector<uint8_t>& input, 
         results.push_back({advanced_result, &advanced.get_stats()});
     }
     
-    // Pick the codec with best compression ratio
+    // Pick the smallest output size (never expand beyond raw)
     size_t best_idx = 0;
-    float best_ratio = results[0].second->compression_ratio;
+    size_t best_size = results[0].first.size();
     
     for (size_t i = 1; i < results.size(); ++i) {
-        if (results[i].second->compression_ratio > best_ratio) {
-            best_ratio = results[i].second->compression_ratio;
+        if (results[i].first.size() < best_size) {
+            best_size = results[i].first.size();
             best_idx = i;
         }
     }
     
     last_stats_ = *results[best_idx].second;
+    last_stats_.compressed_size = results[best_idx].first.size();
+    last_stats_.compression_ratio = static_cast<float>(input.size()) / std::max(1.0f, static_cast<float>(last_stats_.compressed_size));
     return results[best_idx].first;
 }
 

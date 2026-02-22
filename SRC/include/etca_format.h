@@ -136,6 +136,7 @@ public:
      * @param lossless If true, use lossless compression
      * @param variance_threshold For lossy mode: subdivision threshold
      * @param metadata Additional metadata to store (optional)
+     * @param prefer_speed If true, skip slower entropy codecs (faster, slightly larger)
      * @throws std::runtime_error if file cannot be read/written
      */
     static void write_from_file(
@@ -143,7 +144,8 @@ public:
         const std::string& output_path,
         bool lossless = false,
         float variance_threshold = 10.0f,
-        const EtcaMetadata& metadata = EtcaMetadata()
+        const EtcaMetadata& metadata = EtcaMetadata(),
+        bool prefer_speed = false
     );
 };
 
