@@ -15,7 +15,8 @@ enum class EntropyCodec : uint8_t {
     NONE = 0x00,           ///< No compression
     RLE = 0x01,            ///< Run-Length Encoding (legacy)
     DEFLATE = 0x02,        ///< LZ77 + Huffman (streaming)
-    ADVANCED = 0x03        ///< LZ77 + Delta + Huffman adaptive
+    ADVANCED = 0x03,       ///< LZ77 + Delta + Huffman adaptive
+    HUFFMAN = 0x04         ///< Pure Huffman coding
 };
 
 /**
@@ -85,6 +86,10 @@ private:
     CompressionStats stats_;
 };
 
+// Forward declarations for internal helpers
+class BitWriter;
+class BitReader;
+
 /**
  * @brief Huffman Coding
  * Single-pass Huffman encoder for high entropy reduction
@@ -110,6 +115,16 @@ private:
     void generate_codes(const std::shared_ptr<HuffmanNode>& node, 
                         const std::string& code,
                         std::map<uint8_t, std::string>& codes);
+    
+    /**
+     * @brief Serialize Huffman tree to bit stream
+     */
+    void serialize_tree(const std::shared_ptr<HuffmanNode>& node, BitWriter& writer);
+    
+    /**
+     * @brief Deserialize Huffman tree from bit stream
+     */
+    std::shared_ptr<HuffmanNode> deserialize_tree(BitReader& reader);
 };
 
 /**

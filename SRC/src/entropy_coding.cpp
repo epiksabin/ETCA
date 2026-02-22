@@ -106,6 +106,89 @@ std::vector<uint8_t> RLECodec::decode(const std::vector<uint8_t>& input) {
 // HuffmanCodec Implementation
 // ============================================================================
 
+/**
+ * @brief Bit writer helper for Huffman encoding
+ */
+class BitWriter {
+private:
+    std::vector<uint8_t>& output_;
+    uint8_t current_byte_;
+    int bits_in_byte_;
+    
+public:
+    BitWriter(std::vector<uint8_t>& output) 
+        : output_(output), current_byte_(0), bits_in_byte_(0) {}
+    
+    void write_bit(bool bit) {
+        if (bit) {
+            current_byte_ |= (1 << (7 - bits_in_byte_));
+        }
+        bits_in_byte_++;
+        
+        if (bits_in_byte_ == 8) {
+            output_.push_back(current_byte_);
+            current_byte_ = 0;
+            bits_in_byte_ = 0;
+        }
+    }
+    
+    void write_bits(const std::string& bits) {
+        for (char c : bits) {
+            write_bit(c == '1');
+        }
+    }
+    
+    void flush() {
+        if (bits_in_byte_ > 0) {
+            output_.push_back(current_byte_);
+            current_byte_ = 0;
+            bits_in_byte_ = 0;
+        }
+    }
+    
+    int get_pending_bits() const {
+        return bits_in_byte_;
+    }
+};
+
+/**
+ * @brief Bit reader helper for Huffman decoding
+ */
+class BitReader {
+private:
+    const std::vector<uint8_t>& input_;
+    size_t byte_pos_;
+    int bit_pos_;
+    
+public:
+    BitReader(const std::vector<uint8_t>& input, size_t start_pos = 0)
+        : input_(input), byte_pos_(start_pos), bit_pos_(0) {}
+    
+    bool read_bit() {
+        if (byte_pos_ >= input_.size()) {
+            return false;  // End of stream
+        }
+        
+        bool bit = (input_[byte_pos_] >> (7 - bit_pos_)) & 1;
+        bit_pos_++;
+        
+        if (bit_pos_ == 8) {
+            byte_pos_++;
+            bit_pos_ = 0;
+        }
+        
+        return bit;
+    }
+    
+    bool eof() const {
+        return byte_pos_ >= input_.size();
+    }
+    
+    size_t get_position() const {
+        return byte_pos_;
+    }
+};
+
 std::shared_ptr<HuffmanNode> HuffmanCodec::build_tree(const std::vector<uint32_t>& frequencies) {
     // Priority queue: {frequency, node}
     auto cmp = [](const std::pair<uint32_t, std::shared_ptr<HuffmanNode>>& a,
@@ -168,6 +251,49 @@ void HuffmanCodec::generate_codes(const std::shared_ptr<HuffmanNode>& node,
     }
 }
 
+void HuffmanCodec::serialize_tree(const std::shared_ptr<HuffmanNode>& node, BitWriter& writer) {
+    if (!node) return;
+    
+    if (!node->left && !node->right) {
+        // Leaf node: write 1 bit + 8 bits for value
+        writer.write_bit(true);
+        for (int i = 7; i >= 0; --i) {
+            writer.write_bit((node->value >> i) & 1);
+        }
+    } else {
+        // Internal node: write 0 bit, then serialize children
+        writer.write_bit(false);
+        serialize_tree(node->left, writer);
+        serialize_tree(node->right, writer);
+    }
+}
+
+std::shared_ptr<HuffmanNode> HuffmanCodec::deserialize_tree(BitReader& reader) {
+    if (reader.eof()) {
+        return nullptr;
+    }
+    
+    bool is_leaf = reader.read_bit();
+    
+    if (is_leaf) {
+        // Read 8-bit value
+        uint8_t value = 0;
+        for (int i = 7; i >= 0; --i) {
+            if (reader.eof()) return nullptr;
+            if (reader.read_bit()) {
+                value |= (1 << i);
+            }
+        }
+        return std::make_shared<HuffmanNode>(value, 0);
+    } else {
+        // Internal node: recursively deserialize children
+        auto node = std::make_shared<HuffmanNode>(0, 0);
+        node->left = deserialize_tree(reader);
+        node->right = deserialize_tree(reader);
+        return node;
+    }
+}
+
 std::vector<uint8_t> HuffmanCodec::encode(const std::vector<uint8_t>& input) {
     stats_.original_size = input.size();
     
@@ -193,24 +319,159 @@ std::vector<uint8_t> HuffmanCodec::encode(const std::vector<uint8_t>& input) {
     huffman_codes_.clear();
     generate_codes(root, "", huffman_codes_);
     
-    // Encode data (simple approach: just use RLE instead for now, Huffman is complex)
-    // A full Huffman implementation would encode bit sequences
-    // For now, return RLE-encoded as fallback
-    RLECodec rle;
-    auto result = rle.encode(input);
+    // Check if we have any codes (should always have at least one)
+    if (huffman_codes_.empty()) {
+        stats_.compressed_size = input.size() + 1;
+        stats_.codec_used = EntropyCodec::NONE;
+        return input;
+    }
     
-    stats_.compressed_size = result.size();
-    stats_.codec_used = EntropyCodec::RLE;  // Using RLE as approximation
+    // Build output: [codec_type(1)] [tree_size(4)] [tree_data] [data_size(4)] [encoded_bits]
+    std::vector<uint8_t> output;
+    output.push_back(static_cast<uint8_t>(EntropyCodec::HUFFMAN));
+    
+    // Serialize tree to temporary buffer to get size
+    std::vector<uint8_t> tree_data;
+    BitWriter tree_writer(tree_data);
+    serialize_tree(root, tree_writer);
+    tree_writer.flush();
+    
+    // Write tree size (4 bytes)
+    output.push_back((tree_data.size() >> 24) & 0xFF);
+    output.push_back((tree_data.size() >> 16) & 0xFF);
+    output.push_back((tree_data.size() >> 8) & 0xFF);
+    output.push_back(tree_data.size() & 0xFF);
+    
+    // Write tree data
+    output.insert(output.end(), tree_data.begin(), tree_data.end());
+    
+    // Encode input data using Huffman codes
+    std::vector<uint8_t> encoded_bits;
+    BitWriter bit_writer(encoded_bits);
+    
+    for (uint8_t byte : input) {
+        auto it = huffman_codes_.find(byte);
+        if (it != huffman_codes_.end()) {
+            bit_writer.write_bits(it->second);
+        } else {
+            // Should not happen if tree was built correctly
+            stats_.compressed_size = input.size() + 1;
+            stats_.codec_used = EntropyCodec::NONE;
+            return input;
+        }
+    }
+    
+    // Get padding bits before flushing (bits remaining in current byte)
+    int padding_bits = bit_writer.get_pending_bits();
+    if (padding_bits > 0) {
+        padding_bits = 8 - padding_bits;  // Convert to padding count
+    }
+    bit_writer.flush();
+    
+    // Write encoded data size (4 bytes)
+    output.push_back((encoded_bits.size() >> 24) & 0xFF);
+    output.push_back((encoded_bits.size() >> 16) & 0xFF);
+    output.push_back((encoded_bits.size() >> 8) & 0xFF);
+    output.push_back(encoded_bits.size() & 0xFF);
+    
+    // Write encoded bits
+    output.insert(output.end(), encoded_bits.begin(), encoded_bits.end());
+    
+    // Store number of padding bits in last byte (1 byte)
+    output.push_back(static_cast<uint8_t>(padding_bits));
+    
+    stats_.compressed_size = output.size();
+    stats_.codec_used = EntropyCodec::HUFFMAN;
     stats_.compression_ratio = static_cast<float>(stats_.original_size) / 
                                std::max(1.0f, static_cast<float>(stats_.compressed_size));
     
-    return result;
+    return output;
 }
 
 std::vector<uint8_t> HuffmanCodec::decode(const std::vector<uint8_t>& input) {
-    // For now, delegate to RLE since "encode" returns RLE data
-    RLECodec rle;
-    return rle.decode(input);
+    std::vector<uint8_t> decoded;
+    
+    if (input.empty() || input[0] != static_cast<uint8_t>(EntropyCodec::HUFFMAN)) {
+        return decoded;
+    }
+    
+    if (input.size() < 10) {  // Minimum: codec(1) + tree_size(4) + data_size(4) + padding(1)
+        return decoded;
+    }
+    
+    size_t pos = 1;
+    
+    // Read tree size (4 bytes)
+    uint32_t tree_size = (static_cast<uint32_t>(input[pos]) << 24) |
+                        (static_cast<uint32_t>(input[pos+1]) << 16) |
+                        (static_cast<uint32_t>(input[pos+2]) << 8) |
+                        static_cast<uint32_t>(input[pos+3]);
+    pos += 4;
+    
+    if (pos + tree_size > input.size()) {
+        return decoded;  // Invalid tree size
+    }
+    
+    // Deserialize tree
+    std::vector<uint8_t> tree_data(input.begin() + pos, input.begin() + pos + tree_size);
+    BitReader tree_reader(tree_data);
+    auto root = deserialize_tree(tree_reader);
+    pos += tree_size;
+    
+    if (!root) {
+        return decoded;  // Failed to deserialize tree
+    }
+    
+    if (pos + 4 > input.size()) {
+        return decoded;  // Not enough data for size field
+    }
+    
+    // Read encoded data size (4 bytes)
+    uint32_t encoded_size = (static_cast<uint32_t>(input[pos]) << 24) |
+                           (static_cast<uint32_t>(input[pos+1]) << 16) |
+                           (static_cast<uint32_t>(input[pos+2]) << 8) |
+                           static_cast<uint32_t>(input[pos+3]);
+    pos += 4;
+    
+    if (pos + encoded_size + 1 > input.size()) {
+        return decoded;  // Invalid encoded data size
+    }
+    
+    // Read padding bits (last byte)
+    uint8_t padding_bits = input[input.size() - 1];
+    
+    // Decode using tree traversal
+    std::vector<uint8_t> encoded_data(input.begin() + pos, input.begin() + pos + encoded_size);
+    BitReader bit_reader(encoded_data);
+    
+    auto current = root;
+    int bits_read = 0;
+    int total_bits = encoded_size * 8 - padding_bits;
+    
+    while (bits_read < total_bits) {
+        if (bit_reader.eof()) break;
+        
+        bool bit = bit_reader.read_bit();
+        bits_read++;
+        
+        if (bit) {
+            current = current->right;
+        } else {
+            current = current->left;
+        }
+        
+        if (!current) {
+            return decoded;  // Invalid tree traversal
+        }
+        
+        // Check if we reached a leaf
+        if (!current->left && !current->right) {
+            decoded.push_back(current->value);
+            current = root;  // Reset to root for next symbol
+        }
+    }
+    
+    return decoded;
 }
 
 // ============================================================================
@@ -452,6 +713,10 @@ std::vector<uint8_t> AdaptiveEncoder::encode(const std::vector<uint8_t>& input, 
     results.push_back({rle_result, &rle.get_stats()});
     
     if (!prefer_speed) {
+        HuffmanCodec huffman;
+        auto huffman_result = huffman.encode(input);
+        results.push_back({huffman_result, &huffman.get_stats()});
+        
         DeflateCodec deflate;
         auto deflate_result = deflate.encode(input);
         results.push_back({deflate_result, &deflate.get_stats()});
@@ -487,6 +752,10 @@ std::vector<uint8_t> AdaptiveEncoder::decode(const std::vector<uint8_t>& input) 
         case EntropyCodec::RLE: {
             RLECodec rle;
             return rle.decode(input);
+        }
+        case EntropyCodec::HUFFMAN: {
+            HuffmanCodec huffman;
+            return huffman.decode(input);
         }
         case EntropyCodec::DEFLATE: {
             DeflateCodec deflate;
