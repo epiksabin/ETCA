@@ -1,3 +1,4 @@
+// spectrum_analyzer.cpp
 #include "spectrum_analyzer.h"
 #include <cmath>
 #include <algorithm>
@@ -19,7 +20,7 @@ std::vector<std::pair<double, double>> SpectrumAnalyzer::generate_aperiodic_tile
     // Start at root and recursively add tile centers based on inflation pattern
     
     // Golden ratio (used in some aperiodic tilings)
-    const double PHI = (1.0 + std::sqrt(5.0)) / 2.0;
+    const double PHI = (1.0 + std::sqrt(5.0)) / 2.0; // i hope this one is correct
     
     // Recursively place tiles across grid
     std::function<void(double, double, double, int)> place_tiles;

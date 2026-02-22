@@ -11,5 +11,6 @@ In the interest of fostering an open and welcoming environment, we as contributo
 
 ## Unacceptable Behavior
 - Harassment, intimidation, or discrimination
-- Offensive comments or images
+- Offensive comments
 - Personal attacks or trolling
+- Usage of AI (we prefer no AI, but if you know what you are doing, and its a high quality model, then its accepted.)

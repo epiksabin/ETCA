@@ -1,5 +1,10 @@
+# general stuff
 SRC/build/
+
+# unused/archived
 DOCS1/
+
+# misc (used these for older projects)
 *.rar
 *.docx
 README2farsi.md
