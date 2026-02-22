@@ -18,7 +18,7 @@ namespace etca {
 std::vector<uint8_t> EtcaHeader::serialize() const {
     std::vector<uint8_t> data(HEADER_SIZE, 0);
     
-    // Magic bytes
+    // Magic bytes (why is it calld that though)
     data[0] = (MAGIC >> 24) & 0xFF;
     data[1] = (MAGIC >> 16) & 0xFF;
     data[2] = (MAGIC >> 8) & 0xFF;

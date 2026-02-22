@@ -43,9 +43,6 @@ void print_usage(const char* program_name) {
               << "  " << program_name << " info -i photo.etca\n";
 }
 
-// when bro says c++ is easy
-// the easy in question
-
 std::string format_bytes(uint64_t bytes) {
     if (bytes < 1024) return std::to_string(bytes) + " B";
     if (bytes < 1024 * 1024) return std::to_string(bytes / 1024) + " KB";
