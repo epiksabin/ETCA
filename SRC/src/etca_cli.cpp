@@ -82,11 +82,21 @@ int cmd_compress(int argc, char** argv) {
         } else if (arg == "--lossless") {
             lossless = true;
         } else if (arg == "--quality" && i + 1 < argc) {
-            quality = std::stof(argv[++i]);
+            try {
+                quality = std::stof(argv[++i]);
+            } catch (const std::exception&) {
+                std::cerr << "Error: invalid --quality value (expected float 0.0-100.0)\n";
+                return 1;
+            }
         } else if (arg == "--author" && i + 1 < argc) {
             author = argv[++i];
         } else if (arg == "--threads" && i + 1 < argc) {
-            num_threads = std::stoi(argv[++i]);
+            try {
+                num_threads = std::stoi(argv[++i]);
+            } catch (const std::exception&) {
+                std::cerr << "Error: invalid --threads value (expected integer)\n";
+                return 1;
+            }
         }
     }
     
@@ -147,7 +157,12 @@ int cmd_decompress(int argc, char** argv) {
         } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
             output_file = argv[++i];
         } else if (arg == "--threads" && i + 1 < argc) {
-            num_threads = std::stoi(argv[++i]);
+            try {
+                num_threads = std::stoi(argv[++i]);
+            } catch (const std::exception&) {
+                std::cerr << "Error: invalid --threads value (expected integer)\n";
+                return 1;
+            }
         }
     }
     

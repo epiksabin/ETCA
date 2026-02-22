@@ -236,8 +236,9 @@ void EtcaWriter::write_from_file(
         config.variance_threshold = 0.001;  // Very aggressive subdivision for perfect reconstruction
         config.max_tree_depth = 24;  // Allow very deep trees for detail
     } else {
-        // For lossy, use the quality parameter to determine variance threshold
-        config.variance_threshold = variance_threshold / 255.0f;  // Normalize to 0.0-1.0
+        // For lossy, map quality 0-100 to variance threshold 0.0-1.0
+        // Higher quality = lower threshold = more subdivision = better fidelity
+        config.variance_threshold = (100.0f - std::min(100.0f, std::max(0.0f, variance_threshold))) / 100.0f;
         config.max_tree_depth = 12;
     }
     
@@ -299,8 +300,16 @@ spectre::ColorData EtcaReader::read(const std::string& input_path) {
     
     EtcaHeader header = EtcaHeader::deserialize(header_bytes);
     
-    // Skip metadata if present
+    // Skip metadata if present - validate size to prevent DoS from crafted files
     if (header.metadata_size > 0) {
+        file.seekg(0, std::ios::end);
+        std::streamsize file_size = file.tellg();
+        file.seekg(static_cast<std::streamsize>(EtcaHeader::HEADER_SIZE), std::ios::beg);
+        std::streamsize remaining = file_size - static_cast<std::streamsize>(EtcaHeader::HEADER_SIZE);
+        constexpr uint32_t MAX_METADATA_SIZE = 1024 * 1024;  // 1 MB max
+        if (header.metadata_size > static_cast<uint32_t>(remaining) || header.metadata_size > MAX_METADATA_SIZE) {
+            throw std::runtime_error("Invalid metadata size in .etca file");
+        }
         file.ignore(header.metadata_size);
     }
     
@@ -341,8 +350,16 @@ EtcaFile EtcaReader::read_header_and_metadata(const std::string& input_path) {
     EtcaFile etca_file;
     etca_file.header = EtcaHeader::deserialize(header_bytes);
     
-    // Read metadata if present
+    // Read metadata if present - validate size first
     if (etca_file.header.metadata_size > 0) {
+        file.seekg(0, std::ios::end);
+        std::streamsize file_size = file.tellg();
+        file.seekg(static_cast<std::streamsize>(EtcaHeader::HEADER_SIZE), std::ios::beg);
+        std::streamsize remaining = file_size - static_cast<std::streamsize>(EtcaHeader::HEADER_SIZE);
+        constexpr uint32_t MAX_METADATA_SIZE = 1024 * 1024;
+        if (etca_file.header.metadata_size > static_cast<uint32_t>(remaining) || etca_file.header.metadata_size > MAX_METADATA_SIZE) {
+            throw std::runtime_error("Invalid metadata size in .etca file");
+        }
         std::vector<uint8_t> metadata_bytes(etca_file.header.metadata_size);
         file.read(reinterpret_cast<char*>(metadata_bytes.data()), etca_file.header.metadata_size);
         if (file.gcount() != static_cast<std::streamsize>(etca_file.header.metadata_size)) {

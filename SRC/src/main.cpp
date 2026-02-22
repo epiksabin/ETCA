@@ -2,6 +2,7 @@
 #include <iostream>
 #include <memory>
 #include <iomanip>
+#include <algorithm>
 
 // Include all modules
 #include "spectre_tile.h"
@@ -189,7 +190,7 @@ void demo_compression() {
     image.fill(Color(100, 150, 200));
     
     // Set a few pixels to create some difference
-    for (uint32_t i = 0; i < 10; ++i) {
+    for (uint32_t i = 0; i < std::min(10u, image.get_width()); ++i) {
         image.set_pixel(i, i, Color(255, 0, 0));
     }
     

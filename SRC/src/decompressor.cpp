@@ -120,11 +120,14 @@ std::unique_ptr<SpectreTree> Decompressor::deserialize_tree(
                         // Escaped marker byte - add literal marker
                         decoded_data.push_back(RLE_MARKER);
                     } else if (data_offset < data.size()) {
-                        // RLE sequence: value | count
+                        // RLE sequence: value | count - need count byte
                         uint8_t count = data[data_offset++];
                         for (uint8_t i = 0; i < count; ++i) {
                             decoded_data.push_back(next_byte);
                         }
+                    } else {
+                        // Truncated RLE: consumed RLE_MARKER and value but no count - abort to avoid corruption
+                        break;
                     }
                 } else {
                     // Regular byte
@@ -175,36 +178,49 @@ std::unique_ptr<SpectreTree> Decompressor::deserialize_tree(
         return tree;
     }
     
-    // Parse tile records using new compact index-based format
-    // Format: index(2) | depth(1) | parent_index(2) | r(1) | g(1) | b(1) | child_count(1) | [child_index(2)]...
+    // Parse tile records - format MUST match compressor:
+    // Format: index(4) | depth(2) | parent_index(4) | r(1) | g(1) | b(1) | child_count(1) | [child_index(4)]...
     std::vector<uint64_t> index_to_id(tile_count);  // Map tile index to actual tile ID
     std::map<uint64_t, std::pair<uint64_t, uint32_t>> tile_to_parent_and_position;  // Map: tile_id -> (parent_id, child_position)
     
+    const uint32_t NO_PARENT = 0xFFFFFFFF;
+    
     for (uint32_t i = 0; i < tile_count && data_offset < decoded_data.size(); ++i) {
-        // Each tile needs at least: index(2) + depth(1) + parent_index(2) + r(1) + g(1) + b(1) + child_count(1) = 9 bytes
-        if (data_offset + 9 > decoded_data.size()) {
+        // Each tile needs at least: index(4) + depth(2) + parent_index(4) + r(1) + g(1) + b(1) + child_count(1) = 14 bytes
+        if (data_offset + 14 > decoded_data.size()) {
             break;  // Not enough data for this tile
         }
         
-        // Parse tile index (uint16_t)
-        uint16_t tile_index = static_cast<uint16_t>((static_cast<uint16_t>(decoded_data[data_offset] & 0xFF) << 8) |
-                             static_cast<uint16_t>(decoded_data[data_offset+1] & 0xFF));
-        data_offset += 2;
+        // Parse tile index (uint32_t) - 4 bytes
+        uint32_t tile_index = (static_cast<uint32_t>(decoded_data[data_offset] & 0xFF) << 24) |
+                             (static_cast<uint32_t>(decoded_data[data_offset+1] & 0xFF) << 16) |
+                             (static_cast<uint32_t>(decoded_data[data_offset+2] & 0xFF) << 8) |
+                             static_cast<uint32_t>(decoded_data[data_offset+3] & 0xFF);
+        data_offset += 4;
+        
+        // Bounds check: prevent out-of-bounds write from corrupt/malicious input
+        if (tile_index >= tile_count) {
+            break;
+        }
         
         // Convert index to tile ID (use index + 1 to match compressor's ID scheme where root=1)
         uint64_t tile_id = static_cast<uint64_t>(tile_index) + 1;
         index_to_id[tile_index] = tile_id;
         
-        // Parse depth (uint8_t)
-        int tile_depth = static_cast<int>(decoded_data[data_offset++]);
-        
-        // Parse parent index (uint16_t)
-        uint16_t parent_index = static_cast<uint16_t>((static_cast<uint16_t>(decoded_data[data_offset] & 0xFF) << 8) |
-                               static_cast<uint16_t>(decoded_data[data_offset+1] & 0xFF));
+        // Parse depth (uint16_t) - 2 bytes
+        int tile_depth = static_cast<int>((static_cast<uint16_t>(decoded_data[data_offset] & 0xFF) << 8) |
+                         static_cast<uint16_t>(decoded_data[data_offset+1] & 0xFF));
         data_offset += 2;
         
+        // Parse parent index (uint32_t) - 4 bytes
+        uint32_t parent_index = (static_cast<uint32_t>(decoded_data[data_offset] & 0xFF) << 24) |
+                               (static_cast<uint32_t>(decoded_data[data_offset+1] & 0xFF) << 16) |
+                               (static_cast<uint32_t>(decoded_data[data_offset+2] & 0xFF) << 8) |
+                               static_cast<uint32_t>(decoded_data[data_offset+3] & 0xFF);
+        data_offset += 4;
+        
         // Convert parent index to parent ID
-        uint64_t parent_id = (parent_index == 0xFFFF) ? 0 : (static_cast<uint64_t>(parent_index) + 1);
+        uint64_t parent_id = (parent_index == NO_PARENT) ? 0 : (static_cast<uint64_t>(parent_index) + 1);
         
         // Parse color (r, g, b)
         uint8_t r = decoded_data[data_offset++];
@@ -214,18 +230,19 @@ std::unique_ptr<SpectreTree> Decompressor::deserialize_tree(
         // Parse child count
         uint8_t child_count = decoded_data[data_offset++];
         
-        // Parse child indices and convert to IDs, track their positions
+        // Parse child indices - each is 4 bytes (uint32_t)
         std::vector<uint64_t> children;
-        if (data_offset + (child_count * 2) > decoded_data.size()) {
-            // Not enough data for all children
-            break;
+        if (data_offset + (child_count * 4) > decoded_data.size()) {
+            break;  // Not enough data for all children
         }
         
         for (uint8_t j = 0; j < child_count; ++j) {
-            uint16_t child_index = static_cast<uint16_t>((static_cast<uint16_t>(decoded_data[data_offset] & 0xFF) << 8) |
-                                  static_cast<uint16_t>(decoded_data[data_offset+1] & 0xFF));
-            data_offset += 2;
-            uint64_t child_id = (child_index == 0xFFFF) ? 0 : (static_cast<uint64_t>(child_index) + 1);
+            uint32_t child_index = (static_cast<uint32_t>(decoded_data[data_offset] & 0xFF) << 24) |
+                                  (static_cast<uint32_t>(decoded_data[data_offset+1] & 0xFF) << 16) |
+                                  (static_cast<uint32_t>(decoded_data[data_offset+2] & 0xFF) << 8) |
+                                  static_cast<uint32_t>(decoded_data[data_offset+3] & 0xFF);
+            data_offset += 4;
+            uint64_t child_id = (child_index == NO_PARENT) ? 0 : (static_cast<uint64_t>(child_index) + 1);
             children.push_back(child_id);
             
             // Track: child appears at position j in parent tile_id

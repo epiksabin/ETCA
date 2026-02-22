@@ -21,7 +21,12 @@ HierarchicalAddress HierarchicalAddress::from_string(const std::string& str) {
     
     while (std::getline(iss, segment, '.')) {
         if (!segment.empty()) {
-            segments.push_back(static_cast<AddressSegment>(std::stoul(segment)));
+            try {
+                unsigned long val = std::stoul(segment);
+                segments.push_back(static_cast<AddressSegment>(val));
+            } catch (const std::exception&) {
+                return HierarchicalAddress(segments);  // Invalid segment - return partial/empty address
+            }
         }
     }
     

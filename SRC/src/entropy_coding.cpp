@@ -324,6 +324,12 @@ std::vector<uint8_t> DeflateCodec::decode(const std::vector<uint8_t>& input) {
                 uint16_t len = static_cast<uint16_t>((static_cast<uint16_t>(input[i + 1] & 0xFF) << 8) | static_cast<uint16_t>(input[i + 2] & 0xFF));
                 uint16_t dist = static_cast<uint16_t>((static_cast<uint16_t>(input[i + 3] & 0xFF) << 8) | static_cast<uint16_t>(input[i + 4] & 0xFF));
                 
+                // Prevent distance underflow: dist must not exceed decoded size
+                if (dist > decoded.size()) {
+                    i += 5;  // Skip invalid match, avoid undefined behavior
+                    continue;
+                }
+                
                 // Copy from history at distance 'dist' back, 'len' bytes forward
                 size_t src = decoded.size() - dist;
                 for (uint16_t j = 0; j < len; ++j) {
