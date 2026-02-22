@@ -112,13 +112,9 @@ void SpectreTree::add_deserialized_tile(
     // Register the tile
     tiles_[id] = std::move(tile);
     
-    // Estimate hierarchical address based on depth (placeholder)
-    // In full implementation, could reconstruct from parent-child relationships
-    std::vector<uint32_t> address_segments;
-    for (int i = 0; i < depth; ++i) {
-        address_segments.push_back(0);  // Placeholder segment
-    }
-    id_to_address_[id] = HierarchicalAddress(address_segments);
+    // Don't set placeholder address here - it will be set correctly during deserialization
+    // The decompressor will reconstruct addresses from parent-child relationships
+    // Root tile (id == root_id_) gets empty address, others will be set by decompressor
     
     // Update max_depth if needed
     if (depth > max_depth_) {
