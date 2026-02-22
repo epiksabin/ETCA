@@ -69,36 +69,48 @@ else()
 endif()
 
 
-FetchContent_Declare(
-    zlib
-    URL https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz
-    URL_HASH SHA256=17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
+# Prefer system ZLIB and PNG when available (no network in restricted/proxy environments)
+find_package(ZLIB QUIET)
+find_package(PNG QUIET)
 
-FetchContent_MakeAvailable(zlib)
-
-set(ZLIB_INCLUDE_DIR ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
-set(ZLIB_LIBRARY zlibstatic)
-set(ZLIB_FOUND TRUE)
-
-if(NOT TARGET ZLIB::ZLIB)
-    add_library(ZLIB::ZLIB ALIAS zlibstatic)
+if(NOT ZLIB_FOUND)
+    message(STATUS "System ZLIB not found; fetching zlib via FetchContent")
+    FetchContent_Declare(
+        zlib
+        URL https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz
+        URL_HASH SHA256=17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(zlib)
+    set(ZLIB_INCLUDE_DIR ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
+    set(ZLIB_LIBRARY zlibstatic)
+    set(ZLIB_FOUND TRUE)
+    if(NOT TARGET ZLIB::ZLIB)
+        add_library(ZLIB::ZLIB ALIAS zlibstatic)
+    endif()
+else()
+    message(STATUS "Using system ZLIB: ${ZLIB_LIBRARIES}")
 endif()
 
-FetchContent_Declare(
-    libpng
-    URL https://github.com/glennrp/libpng/archive/refs/tags/v1.6.43.tar.gz
-    URL_HASH SHA256=fecc95b46cf05e8e3fc8a414750e0ba5aad00d89e9fdf175e94ff041caf1a03a
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-
-set(PNG_SHARED OFF CACHE BOOL "" FORCE)
-set(PNG_STATIC ON CACHE BOOL "" FORCE)
-set(PNG_TESTS OFF CACHE BOOL "" FORCE)
-set(PNG_INSTALL OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(libpng)
+if(NOT PNG_FOUND)
+    message(STATUS "System PNG not found; fetching libpng via FetchContent")
+    FetchContent_Declare(
+        libpng
+        URL https://github.com/glennrp/libpng/archive/refs/tags/v1.6.43.tar.gz
+        URL_HASH SHA256=fecc95b46cf05e8e3fc8a414750e0ba5aad00d89e9fdf175e94ff041caf1a03a
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    set(PNG_SHARED OFF CACHE BOOL "" FORCE)
+    set(PNG_STATIC ON CACHE BOOL "" FORCE)
+    set(PNG_TESTS OFF CACHE BOOL "" FORCE)
+    set(PNG_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(libpng)
+    set(ETCA_PNG_TARGET png_static)
+    set(ETCA_PNG_INCLUDE_DIRS ${libpng_SOURCE_DIR} ${libpng_BINARY_DIR})
+else()
+    set(ETCA_PNG_TARGET PNG::PNG)
+    set(ETCA_PNG_INCLUDE_DIRS "")
+endif()
 
 function(set_warnings target)
     if(MSVC)
@@ -125,9 +137,11 @@ set(SPECTRE_SOURCES
 
 add_library(libetca STATIC ${SPECTRE_SOURCES})
 target_include_directories(libetca PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(libetca PRIVATE ${libpng_SOURCE_DIR} ${libpng_BINARY_DIR})
+if(ETCA_PNG_INCLUDE_DIRS)
+    target_include_directories(libetca PRIVATE ${ETCA_PNG_INCLUDE_DIRS})
+endif()
 
-target_link_libraries(libetca PUBLIC ZLIB::ZLIB png_static)
+target_link_libraries(libetca PUBLIC ZLIB::ZLIB ${ETCA_PNG_TARGET})
 
 if(OpenMP_FOUND)
     target_link_libraries(libetca PUBLIC OpenMP::OpenMP_CXX)
@@ -142,7 +156,7 @@ set_warnings(libetca)
 set_property(TARGET libetca PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 
 add_executable(spectre_compression src/main.cpp)
-target_link_libraries(spectre_compression PRIVATE libetca ZLIB::ZLIB png_static)
+target_link_libraries(spectre_compression PRIVATE libetca ZLIB::ZLIB ${ETCA_PNG_TARGET})
 if(OpenMP_FOUND)
     target_link_libraries(spectre_compression PRIVATE OpenMP::OpenMP_CXX)
     target_compile_definitions(spectre_compression PRIVATE ETCA_OPENMP=1)
@@ -155,7 +169,7 @@ set_warnings(spectre_compression)
 set_property(TARGET spectre_compression PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
 
 add_executable(etca src/etca_cli.cpp)
-target_link_libraries(etca PRIVATE libetca ZLIB::ZLIB png_static)
+target_link_libraries(etca PRIVATE libetca ZLIB::ZLIB ${ETCA_PNG_TARGET})
 if(OpenMP_FOUND)
     target_link_libraries(etca PRIVATE OpenMP::OpenMP_CXX)
     target_compile_definitions(etca PRIVATE ETCA_OPENMP=1)

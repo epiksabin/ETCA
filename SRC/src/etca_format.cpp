@@ -134,6 +134,15 @@ bool EtcaMetadata::has(const std::string& key) const {
     return data_.find(key) != data_.end();
 }
 
+std::vector<std::pair<std::string, std::string>> EtcaMetadata::entries() const {
+    std::vector<std::pair<std::string, std::string>> result;
+    result.reserve(data_.size());
+    for (const auto& p : data_) {
+        result.emplace_back(p.first, p.second);
+    }
+    return result;
+}
+
 std::vector<uint8_t> EtcaMetadata::serialize() const {
     std::ostringstream oss;
     for (const auto& pair : data_) {
@@ -256,8 +265,8 @@ void EtcaWriter::write_from_file(
     header.height = image.get_height();
     header.color_depth = EtcaHeader::COLOR_DEPTH_RGB24;
     
-    // Serialize metadata
-    auto metadata_bytes = const_cast<EtcaMetadata&>(metadata).serialize();
+    // Serialize metadata (serialize() is const)
+    auto metadata_bytes = metadata.serialize();
     header.metadata_size = static_cast<uint32_t>(metadata_bytes.size());
     
     // Serialize and write to file

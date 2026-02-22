@@ -91,8 +91,10 @@ class BitWriter;
 class BitReader;
 
 /**
- * @brief Huffman Coding
- * Single-pass Huffman encoder for high entropy reduction
+ * @brief Huffman Coding (full bit-level implementation)
+ * Builds a Huffman tree from byte frequencies, serializes the tree, and encodes
+ * input as variable-length bit codes. Only falls back to raw/NONE on empty
+ * input or tree build failure.
  */
 class HuffmanCodec : public EntropyCodec_Base {
 public:

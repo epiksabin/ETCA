@@ -13,6 +13,25 @@
 #include <thread>
 #include <atomic>
 #include <fstream>
+
+namespace {
+
+/// RAII: joins the given thread on destruction (success or exception path).
+class JoinThreadGuard {
+public:
+    explicit JoinThreadGuard(std::thread& t) : thread_(&t) {}
+    ~JoinThreadGuard() {
+        if (thread_ && thread_->joinable()) {
+            thread_->join();
+        }
+    }
+    JoinThreadGuard(const JoinThreadGuard&) = delete;
+    JoinThreadGuard& operator=(const JoinThreadGuard&) = delete;
+private:
+    std::thread* thread_;
+};
+
+} // namespace
 #if ETCA_OPENMP
 #include <omp.h>
 #endif
@@ -125,6 +144,9 @@ int cmd_compress(int argc, char** argv) {
         }
     }
     
+    std::atomic<bool> compression_done(false);
+    std::thread progress_thread;
+    
     try {
         std::cout << "\033[1m\033[36m" << "ETCA Compression" << "\033[0m\n";
         std::cout << "Input:  " << input_file << "\n";
@@ -136,28 +158,25 @@ int cmd_compress(int argc, char** argv) {
         std::cout << "\n";
         
         etca::ProgressBar progress("Compressing", 100);
-        
         auto start_time = std::chrono::high_resolution_clock::now();
-        std::atomic<bool> compression_done(false);
         
-        // Simulate progress updates in a separate thread
-        std::thread progress_thread([&progress, &compression_done]() {
+        progress_thread = std::thread([&progress, &compression_done]() {
             while (!compression_done) {
-                // Simulate progress: start fast, slow down, then speed up
                 double elapsed = progress.get_elapsed();
-                double estimated_total = 5.0;  // Rough estimate, will adjust
+                double estimated_total = 5.0;
                 
                 if (elapsed < estimated_total) {
-                    // Exponential progress simulation
                     double simulated_progress = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
                     progress.update(simulated_progress);
                 } else {
-                    progress.update(0.95);  // Almost done
+                    progress.update(0.95);
                 }
                 
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         });
+        
+        JoinThreadGuard join_guard(progress_thread);  // Always join on scope exit (success or exception)
         
         etca::EtcaMetadata metadata;
         if (!author.empty()) {
@@ -169,7 +188,7 @@ int cmd_compress(int argc, char** argv) {
         
         compression_done = true;
         progress.complete();
-        progress_thread.join();
+        // join_guard destructor joins progress_thread
         
         auto end_time = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(end_time - start_time).count();
@@ -201,6 +220,7 @@ int cmd_compress(int argc, char** argv) {
         
         return 0;
     } catch (const std::exception& e) {
+        compression_done = true;
         std::cerr << "\033[1m\033[31m✗ Error:\033[0m " << e.what() << "\n";
         return 1;
     }
@@ -237,6 +257,9 @@ int cmd_decompress(int argc, char** argv) {
         return 1;
     }
     
+    std::atomic<bool> decompression_done(false);
+    std::thread progress_thread;
+    
     try {
         std::cout << "\033[1m\033[36m" << "ETCA Decompression" << "\033[0m\n";
         std::cout << "Input:  " << input_file << "\n";
@@ -244,15 +267,12 @@ int cmd_decompress(int argc, char** argv) {
         std::cout << "\n";
         
         etca::ProgressBar progress("Decompressing", 100);
-        
         auto start_time = std::chrono::high_resolution_clock::now();
-        std::atomic<bool> decompression_done(false);
         
-        // Simulate progress updates
-        std::thread progress_thread([&progress, &decompression_done]() {
+        progress_thread = std::thread([&progress, &decompression_done]() {
             while (!decompression_done) {
                 double elapsed = progress.get_elapsed();
-                double estimated_total = 3.0;  // Rough estimate
+                double estimated_total = 3.0;
                 
                 if (elapsed < estimated_total) {
                     double simulated_progress = 1.0 - std::exp(-elapsed / (estimated_total * 0.7));
@@ -265,11 +285,12 @@ int cmd_decompress(int argc, char** argv) {
             }
         });
         
+        JoinThreadGuard join_guard(progress_thread);
+        
         etca::EtcaReader::read_to_file(input_file, output_file);
         
         decompression_done = true;
         progress.complete();
-        progress_thread.join();
         
         auto end_time = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(end_time - start_time).count();
@@ -281,6 +302,7 @@ int cmd_decompress(int argc, char** argv) {
         
         return 0;
     } catch (const std::exception& e) {
+        decompression_done = true;
         std::cerr << "\033[1m\033[31m✗ Error:\033[0m " << e.what() << "\n";
         return 1;
     }
@@ -319,14 +341,18 @@ int cmd_info(int argc, char** argv) {
                       ? "\033[33mLossy\033[0m" : "\033[32mLossless\033[0m") << "\n";
         std::cout << "\033[1mDimensions:\033[0m     " << etca_file.header.width 
                   << " × " << etca_file.header.height << " px\n";
-        std::cout << "\033[1mColor depth:\033[0m     " << std::hex << static_cast<int>(etca_file.header.color_depth) 
-                  << std::dec << "-bit RGB\n";
+        std::cout << "\033[1mColor depth:\033[0m     " << static_cast<int>(etca_file.header.color_depth) << "-bit RGB\n";
         
         if (etca_file.header.metadata_size > 0) {
             std::cout << "\n\033[1mMetadata:\033[0m\n";
             std::cout << "─────────────────────────────────────────\n";
             std::cout << "Size: " << format_bytes(etca_file.header.metadata_size) << "\n";
-            // TODO: Print individual metadata entries
+            auto meta_entries = etca_file.metadata.entries();
+            if (!meta_entries.empty()) {
+                for (const auto& kv : meta_entries) {
+                    std::cout << "  " << kv.first << " = " << kv.second << "\n";
+                }
+            }
         }
         
         std::cout << "\n";

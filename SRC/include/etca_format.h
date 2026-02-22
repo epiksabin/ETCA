@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <utility>
 
 namespace etca {
 
@@ -83,6 +84,12 @@ public:
      * @brief Check if key exists
      */
     bool has(const std::string& key) const;
+    
+    /**
+     * @brief Get all key-value pairs (for iteration / inspection).
+     * @return Vector of (key, value) pairs in insertion order
+     */
+    std::vector<std::pair<std::string, std::string>> entries() const;
     
     /**
      * @brief Serialize metadata to binary format (key=value pairs, newline-separated)
