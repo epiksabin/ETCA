@@ -259,40 +259,52 @@ std::unique_ptr<SpectreTree> Decompressor::deserialize_tree(
     
     // Reconstruct hierarchical addresses for ALL tiles from parent-child relationships
     // Build address for each tile by traversing up to root
+    std::unordered_map<uint64_t, bool> address_set;
+    
     for (const auto& [tile_id, parent_and_pos] : tile_to_parent_and_position) {
         std::vector<uint32_t> address_path;
         uint64_t current_id = tile_id;
         
         // Traverse up to root, collecting positions
+        // Validate that parent-child chains are valid
+        int traversal_depth = 0;
+        const int MAX_TRAVERSAL = 1000;  // Safety limit to detect circular references
+        
         while (tile_to_parent_and_position.count(current_id)) {
             const auto& [parent_id, position] = tile_to_parent_and_position[current_id];
             address_path.push_back(position);
             current_id = parent_id;
+            
+            if (++traversal_depth > MAX_TRAVERSAL) {
+                break;  // Circular reference or invalid chain - abort
+            }
         }
         
-        // Reverse to get path from root to tile
-        std::reverse(address_path.begin(), address_path.end());
-        
-        // Set the reconstructed address
-        HierarchicalAddress reconstructed_address(address_path);
-        tree->set_tile_address(tile_id, reconstructed_address);
+        // Verify we reached root (no parent for current_id or current_id == root)
+        if (current_id == 1 || !tile_to_parent_and_position.count(current_id)) {
+            // Valid chain - reverse to get path from root to tile
+            std::reverse(address_path.begin(), address_path.end());
+            
+            // Set the reconstructed address
+            HierarchicalAddress reconstructed_address(address_path);
+            tree->set_tile_address(tile_id, reconstructed_address);
+            address_set[tile_id] = true;
+        }
+        // else: invalid chain - address will remain default (root bounds)
     }
     
     // Ensure root tile (ID=1) has empty address
     tree->set_tile_address(1, HierarchicalAddress());
+    address_set[1] = true;
     
-    // Verify all tiles have addresses - if any don't, it's a deserialization error
-    // but we'll handle it gracefully by giving them empty addresses (root bounds)
+    // Verify all tiles have addresses - flag any tiles without valid addresses
     const auto& all_tiles = tree->get_all_tiles();
     for (SpectreTile::ID tile_id : all_tiles) {
-        if (tile_id == 1) {
-            // Root already handled
-            continue;
+        if (!address_set[tile_id]) {
+            // Tile address reconstruction failed - this indicates corrupt data
+            // Set to empty address (root bounds) to minimize visual corruption
+            tree->set_tile_address(tile_id, HierarchicalAddress());
         }
-        HierarchicalAddress addr = tree->get_address(tile_id);
-        // If address is empty, it means reconstruction failed - this shouldn't happen
-        // but if it does, we'll treat it as root (which will cause incorrect rendering)
-        // This is better than crashing, but indicates a bug in serialization/deserialization
     }
     
     return tree;
@@ -311,10 +323,8 @@ ColorData Decompressor::reconstruct_image(
     auto leaves = tree.get_leaf_nodes();
     
     // For each leaf, paint its region with its color using proper spatial mapping
-    // Parallelize leaf processing since each tile is independent
-#if ETCA_OPENMP
-    #pragma omp parallel for
-#endif
+    // Use sequential outer loop with inner parallelization to avoid race conditions
+    // and ensure proper variable capture
     for (size_t leaf_idx = 0; leaf_idx < leaves.size(); ++leaf_idx) {
         auto leaf_id = leaves[leaf_idx];
         const SpectreTile* tile = tree.get_tile(leaf_id);
@@ -330,20 +340,26 @@ ColorData Decompressor::reconstruct_image(
                              tile_x, tile_y, tile_width, tile_height);
         
         // Fill the tile region with its color
-        uint32_t end_x = tile_x + tile_width;
-        uint32_t end_y = tile_y + tile_height;
+        uint32_t end_x = std::min(tile_x + tile_width, width);
+        uint32_t end_y = std::min(tile_y + tile_height, height);
         
-        // Clamp to image bounds
-        if (end_x > width) end_x = width;
-        if (end_y > height) end_y = height;
+        // Capture bounds locally to avoid race conditions
+        const uint32_t local_tile_x = tile_x;
+        const uint32_t local_tile_y = tile_y;
+        const uint32_t local_end_x = end_x;
+        const uint32_t local_end_y = end_y;
+        const uint8_t tile_r = r;
+        const uint8_t tile_g = g;
+        const uint8_t tile_b = b;
         
         // Parallelize pixel assignment within each tile
+        // Only one level of parallelism to avoid thread oversubscription
 #if ETCA_OPENMP
         #pragma omp parallel for collapse(2)
 #endif
-        for (uint32_t x = tile_x; x < end_x; ++x) {
-            for (uint32_t y = tile_y; y < end_y; ++y) {
-                image.set_pixel(x, y, tile_color);
+        for (uint32_t x = local_tile_x; x < local_end_x; ++x) {
+            for (uint32_t y = local_tile_y; y < local_end_y; ++y) {
+                image.set_pixel(x, y, Color(tile_r, tile_g, tile_b));
             }
         }
     }
@@ -363,59 +379,57 @@ void Decompressor::apply_interpolation(ColorData& image) {
     uint32_t width = image.get_width();
     uint32_t height = image.get_height();
     
-    // Create a duplicate for reading while we write
-    ColorData interpolated = image;
+    // Cache for the source image to avoid redundant get_pixel calls
+    const auto& pixels = image.get_pixels();
+    std::vector<Color> output = pixels;  // Efficient copy
     
     // Apply interpolation kernel: average nearby pixels with weighted blending
-    // For simplicity, use a 3x3 kernel that blurs boundaries slightly
-    const float BLEND_STRENGTH = 0.5f;
+    // Use reduced blend strength for subtle smoothing
+    const float BLEND_STRENGTH = 0.3f;  // Reduced from 0.5f for less blur
+    const float CENTER_WEIGHT = 1.0f - BLEND_STRENGTH;
+    const float NEIGHBOR_WEIGHT = BLEND_STRENGTH / 8.0f;
+    
+    // 8-connected neighbor offsets
+    const int NEIGHBOR_DX[] = {-1,  0,  1, -1,  1, -1,  0,  1};
+    const int NEIGHBOR_DY[] = {-1, -1, -1,  0,  0,  1,  1,  1};
     
     for (uint32_t y = 0; y < height; ++y) {
         for (uint32_t x = 0; x < width; ++x) {
-            // Get center pixel
-            Color center = image.get_pixel(x, y);
+            const size_t center_idx = y * width + x;
+            const Color& center = pixels[center_idx];
             
             // Accumulate weighted colors from neighbors
-            float blend_r = center.r * (1.0f - BLEND_STRENGTH);
-            float blend_g = center.g * (1.0f - BLEND_STRENGTH);
-            float blend_b = center.b * (1.0f - BLEND_STRENGTH);
+            float blend_r = center.r * CENTER_WEIGHT;
+            float blend_g = center.g * CENTER_WEIGHT;
+            float blend_b = center.b * CENTER_WEIGHT;
+            float weight_sum = CENTER_WEIGHT;
             
-            float weight_sum = 1.0f - BLEND_STRENGTH;
-            
-            // Sample neighbors with reduced weight
-            const float neighbor_weight = BLEND_STRENGTH / 8.0f;
-            
-            // 8-connected neighbors
-            int neighbors_x[] = {-1,  0,  1, -1,  1, -1,  0,  1};
-            int neighbors_y[] = {-1, -1, -1,  0,  0,  1,  1,  1};
-            
+            // Sample 8-connected neighbors
             for (int i = 0; i < 8; ++i) {
-                int nx = static_cast<int>(x) + neighbors_x[i];
-                int ny = static_cast<int>(y) + neighbors_y[i];
+                int nx = static_cast<int>(x) + NEIGHBOR_DX[i];
+                int ny = static_cast<int>(y) + NEIGHBOR_DY[i];
                 
                 if (nx >= 0 && nx < static_cast<int>(width) &&
                     ny >= 0 && ny < static_cast<int>(height)) {
-                    Color neighbor = image.get_pixel(static_cast<uint32_t>(nx), static_cast<uint32_t>(ny));
-                    blend_r += neighbor.r * neighbor_weight;
-                    blend_g += neighbor.g * neighbor_weight;
-                    blend_b += neighbor.b * neighbor_weight;
-                    weight_sum += neighbor_weight;
+                    const Color& neighbor = pixels[static_cast<size_t>(ny) * width + static_cast<size_t>(nx)];
+                    blend_r += neighbor.r * NEIGHBOR_WEIGHT;
+                    blend_g += neighbor.g * NEIGHBOR_WEIGHT;
+                    blend_b += neighbor.b * NEIGHBOR_WEIGHT;
+                    weight_sum += NEIGHBOR_WEIGHT;
                 }
             }
             
-            // Normalize and clamp to [0, 255]
-            if (weight_sum > 0) {
-                uint8_t final_r = static_cast<uint8_t>(blend_r / weight_sum);
-                uint8_t final_g = static_cast<uint8_t>(blend_g / weight_sum);
-                uint8_t final_b = static_cast<uint8_t>(blend_b / weight_sum);
-                
-                interpolated.set_pixel(x, y, Color(final_r, final_g, final_b));
+            // Normalize and write result
+            if (weight_sum > 0.0f) {
+                output[center_idx].r = static_cast<uint8_t>(blend_r / weight_sum);
+                output[center_idx].g = static_cast<uint8_t>(blend_g / weight_sum);
+                output[center_idx].b = static_cast<uint8_t>(blend_b / weight_sum);
             }
         }
     }
     
-    // Replace original with interpolated
-    image = interpolated;
+    // Replace image pixels with interpolated values
+    image.get_pixels() = output;
 }
 
 } // namespace spectre

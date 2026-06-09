@@ -61,9 +61,14 @@ public:
     Color get_pixel(uint32_t x, uint32_t y) const;
     
     /**
-     * @brief Get all pixels as a flat array
+     * @brief Get all pixels as a flat array (const)
      */
     const std::vector<Color>& get_pixels() const { return pixels_; }
+    
+    /**
+     * @brief Get all pixels as a mutable flat array for efficient updates
+     */
+    std::vector<Color>& get_pixels() { return pixels_; }
     
     /**
      * @brief Extract a sub-region of the image

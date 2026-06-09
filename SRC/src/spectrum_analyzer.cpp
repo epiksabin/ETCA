@@ -15,44 +15,37 @@ std::vector<std::pair<double, double>> SpectrumAnalyzer::generate_aperiodic_tile
     int depth) {
     
     std::vector<std::pair<double, double>> positions;
-    
-    // Generate Spectre tile positions using hierarchical inflation
-    // Start at root and recursively add tile centers based on inflation pattern
+    positions.reserve(std::max(1 << depth, 16));  // Pre-allocate expected capacity
     
     // Golden ratio (used in some aperiodic tilings)
-    const double PHI = (1.0 + std::sqrt(5.0)) / 2.0; // i hope this one is correct
+    static const double PHI = (1.0 + std::sqrt(5.0)) / 2.0;
+    static const double ANGLE_STEP = 2.0 * M_PI / PHI;
+    static const double OFFSET_FACTOR = 0.5 - 1.0 / PHI;
     
     // Recursively place tiles across grid
     std::function<void(double, double, double, int)> place_tiles;
-    place_tiles = [&place_tiles, &positions, depth, PHI](double x, double y, double size, int current_depth) {
+    place_tiles = [&place_tiles, &positions, depth](double x, double y, double size, int current_depth) {
         if (current_depth >= depth) {
             positions.emplace_back(x, y);
             return;
         }
         
-        // Spectre inflation: 4 children with golden-ratio-based positioning
-        // Each child is offset by irrational multiples to break periodicity
         double child_size = size / PHI;
+        double offset_x = size * OFFSET_FACTOR;
+        double offset_y = size * OFFSET_FACTOR;
         
-        // Aperiodic offset pattern (not aligned to grid)
-        double offset_x = size * (0.5 - 1.0 / PHI);
-        double offset_y = size * (0.5 - 1.0 / PHI);
-        
-        // Place 4 children with aperiodic offsets
         double positions_x[] = {offset_x, size - offset_x, offset_x, size - offset_x};
         double positions_y[] = {offset_y, offset_y, size - offset_y, size - offset_y};
-        
-        // Further aperiodic perturbation using irrational angle
-        double angle_step = 2.0 * M_PI / PHI;  // Irrational angle
         
         for (int i = 0; i < 4; ++i) {
             double child_x = x + positions_x[i];
             double child_y = y + positions_y[i];
             
-            // Apply subtle aperiodic rotation based on golden angle
-            double angle = angle_step * i;
-            double rotated_x = child_x * std::cos(angle) - child_y * std::sin(angle);
-            double rotated_y = child_x * std::sin(angle) + child_y * std::cos(angle);
+            double angle = ANGLE_STEP * i;
+            double cos_angle = std::cos(angle);
+            double sin_angle = std::sin(angle);
+            double rotated_x = child_x * cos_angle - child_y * sin_angle;
+            double rotated_y = child_x * sin_angle + child_y * cos_angle;
             
             place_tiles(rotated_x, rotated_y, child_size, current_depth + 1);
         }

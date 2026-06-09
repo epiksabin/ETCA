@@ -71,7 +71,12 @@ Color ColorData::calculate_average_color() const {
 }
 
 void ColorData::fill(const Color& color) {
+    // Optimized fill using direct assignment
     std::fill(pixels_.begin(), pixels_.end(), color);
+}
+
+std::vector<Color>& ColorData::get_pixels() {
+    return pixels_;
 }
 
 void ColorData::save_to_file(const std::string& file_path) const {

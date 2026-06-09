@@ -71,9 +71,15 @@ void TileInflater::get_child_bounds(
 
 double TileInflater::calculate_tile_size(double initial_size, int depth) {
     // Each inflation level reduces tile size
-    // Spectre tiles scale with a specific ratio (approximately 2/3)
+    // Spectre tiles scale with a specific ratio (approximately 1/2)
+    if (depth <= 0) return initial_size;
+    
     const double SCALE_FACTOR = 0.5;
-    return initial_size * std::pow(SCALE_FACTOR, depth);
+    double result = initial_size;
+    for (int i = 0; i < depth; ++i) {
+        result *= SCALE_FACTOR;  // More efficient than pow for small depths
+    }
+    return result;
 }
 
 } // namespace spectre

@@ -60,14 +60,11 @@ void VarianceCalculator::calculate_channel_variance(
         var_b += db * db;
     }
     
-    var_r /= count;
-    var_g /= count;
-    var_b /= count;
-    
-    // Normalize to 0-1 range
-    var_r = std::sqrt(var_r) / 255.0;
-    var_g = std::sqrt(var_g) / 255.0;
-    var_b = std::sqrt(var_b) / 255.0;
+    // Normalize to 0-1 range using optimized formula
+    const double NORM_FACTOR = 1.0 / (255.0 * count);
+    var_r = std::sqrt(var_r * NORM_FACTOR);
+    var_g = std::sqrt(var_g * NORM_FACTOR);
+    var_b = std::sqrt(var_b * NORM_FACTOR);
 }
 
 bool VarianceCalculator::should_subdivide(const ColorData& data, double threshold) {
