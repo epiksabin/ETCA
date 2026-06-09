@@ -69,7 +69,12 @@ void Compressor::serialize_tree(
     // Update structural stats with verified count
     last_stats_.tile_count = valid_tile_count;
     
-    // Write header
+    // OPTIMIZATION: Pre-allocate output buffer to avoid repeated reallocations
+    // Estimate: header(14 bytes) + tiles(~25-50 bytes each) + some overhead
+    size_t estimated_size = 14 + (valid_tile_count * 50) + 1000;
+    output.reserve(estimated_size);
+    
+    // Write header (14 bytes)
     output.push_back((width >> 24) & 0xFF);
     output.push_back((width >> 16) & 0xFF);
     output.push_back((width >> 8) & 0xFF);
@@ -139,6 +144,9 @@ void Compressor::serialize_tree(
             output.push_back(child_index & 0xFF);
         }
     }
+    
+    // Shrink to fit to reduce memory after serialization
+    output.shrink_to_fit();
 }
 
 void Compressor::apply_entropy_coding(std::vector<uint8_t>& data) {
