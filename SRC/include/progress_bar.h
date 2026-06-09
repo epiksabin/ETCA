@@ -96,8 +96,8 @@ private:
         auto now = std::chrono::high_resolution_clock::now();
         double elapsed_since_last = std::chrono::duration<double>(now - last_update_time_).count();
         
-        // Throttle updates to ~10 FPS
-        if (elapsed_since_last < 0.1 && current_step_ < total_steps_) {
+        // Throttle updates to reduce console spam (~4 FPS for smooth but not excessive updates)
+        if (elapsed_since_last < 0.25 && current_step_ < total_steps_) {
             return;
         }
         last_update_time_ = now;
