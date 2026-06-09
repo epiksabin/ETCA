@@ -47,13 +47,16 @@ void print_usage(const char* program_name) {
               << "  -o, --output <file>         Output .etca file (auto-generated if omitted)\n"
               << "  --lossless                  Use lossless compression (default: lossy)\n"
               << "  --quality <0.0-100.0>       Compression quality (default: 10.0)\n"
-              << "  --fast                      Faster compression (skip slower codecs, may be slightly larger)\n"
+              << "  --performance <mode>        Performance mode: power-saver, medium, performance\n"
+              << "                              (default: medium). Affects speed and resource usage\n"
+              << "  --threads <number>          Number of threads to use (default: auto-detect based on mode)\n"
               << "  --author <name>             Author metadata\n"
-              << "  --threads <number>          Number of threads to use (default: all available)\n"
               << "\nDecompress options:\n"
               << "  -i, --input <file>          Input .etca file\n"
               << "  -o, --output <file>         Output image file (PPM or PNG)\n"
-              << "  --threads <number>          Number of threads to use (default: all available)\n"
+              << "  --performance <mode>        Performance mode: power-saver, medium, performance\n"
+              << "                              (default: medium). Affects decompression speed\n"
+              << "  --threads <number>          Number of threads to use (default: auto-detect based on mode)\n"
               << "\nInfo options:\n"
               << "  -i, --input <file>          Input .etca file\n"
               << "\nExamples:\n"
@@ -89,10 +92,10 @@ std::string estimate_eta(double elapsed, double progress) {
 }
 
 int cmd_compress(int argc, char** argv) {
-    std::string input_file, output_file, author;
+    std::string input_file, output_file, author, performance_mode = "medium";
     bool lossless = false;
     float quality = 10.0f;
-    int num_threads = -1;  // -1 = use all available
+    int num_threads = -1;  // -1 = auto-detect based on mode
     bool prefer_speed = false;
     
     for (int i = 2; i < argc; ++i) {
@@ -114,6 +117,12 @@ int cmd_compress(int argc, char** argv) {
             }
         } else if (arg == "--author" && i + 1 < argc) {
             author = argv[++i];
+        } else if (arg == "--performance" && i + 1 < argc) {
+            performance_mode = argv[++i];
+            if (performance_mode != "power-saver" && performance_mode != "medium" && performance_mode != "performance") {
+                std::cerr << "Error: invalid --performance mode (expected: power-saver, medium, or performance)\n";
+                return 1;
+            }
         } else if (arg == "--threads" && i + 1 < argc) {
             try {
                 num_threads = std::stoi(argv[++i]);
@@ -124,24 +133,52 @@ int cmd_compress(int argc, char** argv) {
         }
     }
     
+    if (input_file.empty()) {
+        std::cerr << "Error: --input is required\n";
+        return 1;
+    }
+    
+    // Configure performance mode and threading
+    spectre::CompressionConfig config;
+    
+    if (performance_mode == "power-saver") {
+        // Minimize resource usage
+        config.variance_threshold = 0.08;  // Higher = fewer tiles, faster
+        config.max_tree_depth = 8;         // Shallow = faster
+        config.prefer_speed = true;        // Skip slow codecs
+        config.use_adaptive_encoding = false;  // Skip adaptive selection
+        if (num_threads <= 0) num_threads = 1;  // Single-threaded by default
+    } else if (performance_mode == "medium") {
+        // Balanced (default)
+        config.variance_threshold = 0.05;  // Default
+        config.max_tree_depth = 12;        // Good detail
+        config.prefer_speed = false;
+        config.use_adaptive_encoding = true;
+        if (num_threads <= 0) {
+            int hw_cores = static_cast<int>(std::thread::hardware_concurrency());
+            num_threads = std::max(1, hw_cores / 2);  // Use half cores
+        }
+    } else if (performance_mode == "performance") {
+        // Maximize quality and speed with all resources
+        config.variance_threshold = 0.02;  // Lower = more tiles, better quality
+        config.max_tree_depth = 14;        // Very detailed
+        config.prefer_speed = false;
+        config.use_adaptive_encoding = true;
+        if (num_threads <= 0) {
+            num_threads = static_cast<int>(std::thread::hardware_concurrency());  // Use all cores
+        }
+    }
+    
+    // Apply thread count
     if (num_threads > 0) {
 #if ETCA_OPENMP
         omp_set_num_threads(num_threads);
 #endif
     }
     
-    if (input_file.empty()) {
-        std::cerr << "Error: --input is required\n";
-        return 1;
-    }
-    
     if (output_file.empty()) {
-        size_t dot_pos = input_file.find_last_of('.');
-        if (dot_pos != std::string::npos) {
-            output_file = input_file.substr(0, dot_pos) + ".etca";
-        } else {
-            output_file = input_file + ".etca";
-        }
+        std::cerr << "\033[1m\033[31m✗ Error:\033[0m Output file is required (-o or --output)\n";
+        return 1;
     }
     
     std::atomic<bool> compression_done(false);
@@ -185,8 +222,9 @@ int cmd_compress(int argc, char** argv) {
             metadata.set("author", author);
         }
         metadata.set("compression_mode", lossless ? "lossless" : "lossy");
+        metadata.set("performance_mode", performance_mode);
         
-        etca::EtcaWriter::write_from_file(input_file, output_file, lossless, quality, metadata, prefer_speed);
+        etca::EtcaWriter::write_from_file(input_file, output_file, lossless, quality, metadata, false, &config);
         
         compression_done = true;
         progress.complete();
@@ -229,8 +267,8 @@ int cmd_compress(int argc, char** argv) {
 }
 
 int cmd_decompress(int argc, char** argv) {
-    std::string input_file, output_file;
-    int num_threads = -1;  // -1 = use all available
+    std::string input_file, output_file, performance_mode = "medium";
+    int num_threads = -1;  // -1 = auto-detect based on mode
     
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -238,6 +276,12 @@ int cmd_decompress(int argc, char** argv) {
             input_file = argv[++i];
         } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
             output_file = argv[++i];
+        } else if (arg == "--performance" && i + 1 < argc) {
+            performance_mode = argv[++i];
+            if (performance_mode != "power-saver" && performance_mode != "medium" && performance_mode != "performance") {
+                std::cerr << "Error: invalid --performance mode (expected: power-saver, medium, or performance)\n";
+                return 1;
+            }
         } else if (arg == "--threads" && i + 1 < argc) {
             try {
                 num_threads = std::stoi(argv[++i]);
@@ -248,15 +292,30 @@ int cmd_decompress(int argc, char** argv) {
         }
     }
     
+    if (input_file.empty() || output_file.empty()) {
+        std::cerr << "Error: --input and --output are required\n";
+        return 1;
+    }
+    
+    // Configure performance mode and threading for decompression
+    if (performance_mode == "power-saver") {
+        if (num_threads <= 0) num_threads = 1;  // Single-threaded by default
+    } else if (performance_mode == "medium") {
+        if (num_threads <= 0) {
+            int hw_cores = static_cast<int>(std::thread::hardware_concurrency());
+            num_threads = std::max(1, hw_cores / 2);  // Use half cores
+        }
+    } else if (performance_mode == "performance") {
+        if (num_threads <= 0) {
+            num_threads = static_cast<int>(std::thread::hardware_concurrency());  // Use all cores
+        }
+    }
+    
+    // Apply thread count
     if (num_threads > 0) {
 #if ETCA_OPENMP
         omp_set_num_threads(num_threads);
 #endif
-    }
-    
-    if (input_file.empty() || output_file.empty()) {
-        std::cerr << "Error: --input and --output are required\n";
-        return 1;
     }
     
     std::atomic<bool> decompression_done(false);

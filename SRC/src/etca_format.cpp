@@ -233,28 +233,36 @@ void EtcaWriter::write_from_file(
     bool lossless,
     float variance_threshold,
     const EtcaMetadata& metadata,
-    bool prefer_speed) {
+    bool prefer_speed,
+    const spectre::CompressionConfig* config) {
     
     // Load image from file
     spectre::ColorData image(input_file);
     
     // Create compression configuration
-    spectre::CompressionConfig config;
-    config.prefer_speed = prefer_speed;
+    spectre::CompressionConfig compression_config;
     
-    if (lossless) {
-        // For lossless, use extremely low variance threshold to capture all details
-        config.variance_threshold = 0.001;  // Very aggressive subdivision for perfect reconstruction
-        config.max_tree_depth = 24;  // Allow very deep trees for detail
+    if (config != nullptr) {
+        // Use provided configuration
+        compression_config = *config;
     } else {
-        // For lossy, map quality 0-100 to variance threshold 0.0-1.0
-        // Higher quality = lower threshold = more subdivision = better fidelity
-        config.variance_threshold = (100.0f - std::min(100.0f, std::max(0.0f, variance_threshold))) / 100.0f;
-        config.max_tree_depth = 12;
+        // Use default behavior based on lossless/variance_threshold/prefer_speed
+        compression_config.prefer_speed = prefer_speed;
+        
+        if (lossless) {
+            // For lossless, use extremely low variance threshold to capture all details
+            compression_config.variance_threshold = 0.001;  // Very aggressive subdivision for perfect reconstruction
+            compression_config.max_tree_depth = 24;  // Allow very deep trees for detail
+        } else {
+            // For lossy, map quality 0-100 to variance threshold 0.0-1.0
+            // Higher quality = lower threshold = more subdivision = better fidelity
+            compression_config.variance_threshold = (100.0f - std::min(100.0f, std::max(0.0f, variance_threshold))) / 100.0f;
+            compression_config.max_tree_depth = 12;
+        }
     }
     
     // Create and use compressor
-    spectre::Compressor compressor(config);
+    spectre::Compressor compressor(compression_config);
     spectre::CompressedImage compressed = compressor.compress(image);
     
     // Create header

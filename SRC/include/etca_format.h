@@ -137,13 +137,14 @@ public:
     );
     
     /**
-     * @brief Write image file to .etca format with metadata
+     * @brief Write image file to .etca format with metadata and compression config
      * @param input_file Input image file (PPM or PNG)
      * @param output_path Output .etca file path
      * @param lossless If true, use lossless compression
      * @param variance_threshold For lossy mode: subdivision threshold
      * @param metadata Additional metadata to store (optional)
      * @param prefer_speed If true, skip slower entropy codecs (faster, slightly larger)
+     * @param config Optional compression configuration (overrides lossless/variance_threshold/prefer_speed)
      * @throws std::runtime_error if file cannot be read/written
      */
     static void write_from_file(
@@ -152,7 +153,8 @@ public:
         bool lossless = false,
         float variance_threshold = 10.0f,
         const EtcaMetadata& metadata = EtcaMetadata(),
-        bool prefer_speed = false
+        bool prefer_speed = false,
+        const spectre::CompressionConfig* config = nullptr
     );
 };
 
