@@ -15,7 +15,7 @@ std::vector<std::pair<double, double>> SpectrumAnalyzer::generate_aperiodic_tile
     int depth) {
     
     std::vector<std::pair<double, double>> positions;
-    positions.reserve(std::max(1 << depth, 16));  // Pre-allocate expected capacity
+    positions.reserve(static_cast<size_t>(std::max(1 << depth, 16)));  // Pre-allocate expected capacity
     
     // Golden ratio (used in some aperiodic tilings)
     static const double PHI = (1.0 + std::sqrt(5.0)) / 2.0;

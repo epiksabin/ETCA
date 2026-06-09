@@ -198,8 +198,8 @@ int cmd_compress(int argc, char** argv) {
         // Get file sizes for stats
         std::ifstream in_file(input_file, std::ios::binary | std::ios::ate);
         std::ifstream out_file(output_file, std::ios::binary | std::ios::ate);
-        size_t input_size = in_file.tellg();
-        size_t output_size = out_file.tellg();
+        size_t input_size = static_cast<size_t>(in_file.tellg());
+        size_t output_size = static_cast<size_t>(out_file.tellg());
         in_file.close();
         out_file.close();
         
@@ -209,7 +209,7 @@ int cmd_compress(int argc, char** argv) {
         std::cout << "Input size:  " << format_bytes(input_size) << "\n";
         std::cout << "Output size: " << format_bytes(output_size) << "\n";
         if (output_size > 0 && input_size > 0) {
-            double ratio = static_cast<double>(input_size) / output_size;
+            double ratio = static_cast<double>(input_size) / static_cast<double>(output_size);
             std::cout << "Ratio:       " << std::fixed << std::setprecision(2) << ratio << "x";
             if (ratio > 1.0) {
                 std::cout << " \033[32m(compressed)\033[0m";
@@ -330,7 +330,7 @@ int cmd_info(int argc, char** argv) {
         
         // Get file size
         std::ifstream file(input_file, std::ios::binary | std::ios::ate);
-        size_t file_size = file.tellg();
+        size_t file_size = static_cast<size_t>(file.tellg());
         file.close();
         
         std::cout << "\033[1m\033[36m" << "ETCA File Information" << "\033[0m\n";

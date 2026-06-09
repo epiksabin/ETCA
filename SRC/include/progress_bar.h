@@ -26,7 +26,7 @@ public:
      * @brief Update progress (0.0 to 1.0)
      */
     void update(double progress) {
-        current_step_ = static_cast<size_t>(progress * total_steps_);
+        current_step_ = static_cast<size_t>(progress * static_cast<double>(total_steps_));
         current_step_ = std::min(current_step_, total_steps_);
         render();
     }
@@ -72,7 +72,7 @@ public:
     double get_eta() const {
         if (current_step_ == 0) return 0.0;
         double elapsed = get_elapsed();
-        double progress = static_cast<double>(current_step_) / total_steps_;
+        double progress = static_cast<double>(current_step_) / static_cast<double>(total_steps_);
         if (progress <= 0.0) return 0.0;
         double total_estimated = elapsed / progress;
         return total_estimated - elapsed;
@@ -102,8 +102,10 @@ private:
         }
         last_update_time_ = now;
         
-        double progress = static_cast<double>(current_step_) / total_steps_;
-        size_t filled = static_cast<size_t>(progress * width_);
+        double progress = static_cast<double>(current_step_) / static_cast<double>(total_steps_);
+        // Improved accuracy: round properly instead of truncating
+        size_t filled = static_cast<size_t>(std::round(progress * static_cast<double>(width_)));
+        filled = std::min(filled, width_);  // Clamp to width
         
         // Clear line and move cursor to start
         std::cout << "\r\033[K";
@@ -111,19 +113,19 @@ private:
         // Task name
         std::cout << "\033[1m" << task_name_ << "\033[0m ";
         
-        // Progress bar
+        // Progress bar using ASCII characters for compatibility
         std::cout << "[";
         if (supports_colors()) {
             std::cout << "\033[32m";  // Green
         }
         for (size_t i = 0; i < filled; ++i) {
-            std::cout << "█";
+            std::cout << "=";
         }
         if (supports_colors()) {
             std::cout << "\033[0m";
         }
         for (size_t i = filled; i < width_; ++i) {
-            std::cout << "░";
+            std::cout << "-";
         }
         std::cout << "] ";
         
